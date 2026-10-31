@@ -19,10 +19,9 @@ from __future__ import annotations
 import csv
 import io
 import json
-from dataclasses import dataclass
 from urllib.parse import quote
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from powercontext.limits import MAX_SOURCE_ID_LENGTH
 from powercontext.sources.definitions import AdapterSourceDefinition, SourceDefinition
@@ -42,8 +41,29 @@ def _is_blank(value: str) -> bool:
     return not value.strip()
 
 
-@dataclass(frozen=True, slots=True)
-class CSVRowInput:
+class CSVDocumentInput(BaseModel):
+    """One complete CSV document selected by a caller-stable identity."""
+
+    document_id: str
+    primary_key: str
+    content: bytes
+
+    @field_validator("document_id")
+    @classmethod
+    def _validate_document_id(cls, value: str) -> str:
+        if not value or not value.strip() or value != value.strip():
+            raise ValueError("document_id must be non-empty and trimmed")  # noqa: TRY003
+        return value
+
+    @field_validator("primary_key")
+    @classmethod
+    def _validate_primary_key(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("primary_key must be non-empty")  # noqa: TRY003
+        return value
+
+
+class CSVRowInput(BaseModel):
     """One validated data row ready to be materialized as a Source."""
 
     document_id: str
@@ -54,7 +74,9 @@ class CSVRowInput:
 
 
 class CSVRowSource(Source):
-    """Captured exact CSV row addressable by primary key value."""
+    """Captured exact CSV row addressable by document and primary key value."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     source_id: str
     document_id: str
@@ -64,19 +86,15 @@ class CSVRowSource(Source):
     values: tuple[str, ...]
 
 
-def parse_csv_document(
-    raw_bytes: bytes,
-    document_id: str,
-    primary_key: str,
-) -> tuple[CSVRowInput, ...]:
+def parse_csv_document(value: CSVDocumentInput) -> tuple[CSVRowInput, ...]:
     """Parse and validate a complete CSV document before returning any row."""
 
-    rows = _read_rows(raw_bytes)
+    rows = _read_rows(value.content)
     if not rows or not rows[0]:
         raise ValueError("CSV document must contain a header row")  # noqa: TRY003
 
     columns = tuple(rows[0])
-    primary_key_index = _validate_header(columns, primary_key)
+    primary_key_index = _validate_header(columns, value.primary_key)
 
     seen_primary_key_values: set[str] = set()
     result: list[CSVRowInput] = []
@@ -86,8 +104,8 @@ def parse_csv_document(
         primary_key_value = _validate_row(row, columns, primary_key_index, seen_primary_key_values)
         result.append(
             CSVRowInput(
-                document_id=document_id,
-                primary_key=primary_key,
+                document_id=value.document_id,
+                primary_key=value.primary_key,
                 primary_key_value=primary_key_value,
                 columns=columns,
                 values=tuple(row),
@@ -96,10 +114,10 @@ def parse_csv_document(
     return tuple(result)
 
 
-def csv_row_source_id(primary_key: str, primary_key_value: str) -> str:
+def csv_row_source_id(document_id: str, primary_key_value: str) -> str:
     """Build the stable identity of one CSV row Source."""
 
-    source_id = f"{quote(primary_key, safe='')}:{quote(primary_key_value, safe='')}"
+    source_id = f"csv:{quote(document_id, safe='')}:{quote(primary_key_value, safe='')}"
     if len(source_id) > MAX_SOURCE_ID_LENGTH:
         raise ValueError(f"CSV row source id must not exceed {MAX_SOURCE_ID_LENGTH} characters")  # noqa: TRY003
     return source_id
@@ -159,7 +177,7 @@ class CSVRowSourceAdapter:
     source_class = CSVRowSource
 
     async def resolve(self, value: CSVRowInput) -> CSVRowSource:
-        source_id = csv_row_source_id(value.primary_key, value.primary_key_value)
+        source_id = csv_row_source_id(value.document_id, value.primary_key_value)
         return CSVRowSource(
             name=source_id,
             source_id=source_id,
@@ -213,6 +231,7 @@ CSV_ROW_SOURCE_DEFINITION: SourceDefinition[CSVRowInput, CSVRowSource, CSVRowInp
 __all__ = [
     "CSV_ROW_SOURCE_DEFINITION",
     "CSV_ROW_SOURCE_NAME",
+    "CSVDocumentInput",
     "CSVRowInput",
     "CSVRowSource",
     "CSVRowSourceAdapter",
