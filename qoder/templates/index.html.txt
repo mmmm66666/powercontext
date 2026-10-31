@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>课程笔记检索助手 - Seekdb 混合检索</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>课程 &amp; 文献笔记检索助手</h1>
+            <p class="subtitle">基于 OceanBase Seekdb 混合检索 &mdash; 语义搜索 + 关键词匹配，RRF 融合排序</p>
+        </header>
+
+        <!-- Upload Section -->
+        <section class="card upload-section">
+            <h2>上传文档</h2>
+            <div class="upload-area" id="uploadArea">
+                <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p>拖拽文件到此处，或 <label for="fileInput" class="link">点击选择</label></p>
+                <p class="hint">支持 PDF、TXT 格式，单文件最大 50 MB</p>
+                <input type="file" id="fileInput" accept=".pdf,.txt" hidden>
+            </div>
+            <div class="upload-progress" id="uploadProgress" hidden>
+                <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+                <p class="progress-text" id="progressText">上传中...</p>
+            </div>
+        </section>
+
+        <!-- Search Section -->
+        <section class="card search-section">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="输入搜索内容，支持自然语言语义搜索与关键词精确匹配..." autocomplete="off">
+                <button id="searchBtn" class="btn btn-primary">检索</button>
+            </div>
+            <div class="search-meta">
+                <span id="resultCount"></span>
+                <span id="dbStatus" class="db-status"></span>
+            </div>
+        </section>
+
+        <!-- Results Section -->
+        <section class="results-section" id="resultsSection" hidden>
+            <div id="resultsList"></div>
+        </section>
+
+        <!-- Files Section -->
+        <section class="card files-section">
+            <h2>已上传文档</h2>
+            <div id="filesList" class="files-list">
+                <p class="empty">暂无文档，请先上传</p>
+            </div>
+        </section>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="/static/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,238 @@
+// ── State ──────────────────────────────────────────────
+const $ = (sel) => document.querySelector(sel);
+
+// ── Init ───────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+    checkHealth();
+    loadFiles();
+    setupUpload();
+    setupSearch();
+});
+
+// ── Health Check ───────────────────────────────────────
+async function checkHealth() {
+    try {
+        const res = await fetch("/api/health");
+        const data = await res.json();
+        const el = $("#dbStatus");
+        if (data.status === "ok") {
+            el.innerHTML = '<span class="db-dot ok"></span> Seekdb 已连接 · ' + data.total_chunks + " 片段";
+        } else {
+            el.innerHTML = '<span class="db-dot err"></span> 未连接';
+        }
+    } catch {
+        $("#dbStatus").innerHTML = '<span class="db-dot err"></span> 服务异常';
+    }
+}
+
+// ── Upload ─────────────────────────────────────────────
+function setupUpload() {
+    const area = $("#uploadArea");
+    const input = $("#fileInput");
+
+    area.addEventListener("click", () => input.click());
+
+    area.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        area.classList.add("drag-over");
+    });
+    area.addEventListener("dragleave", () => area.classList.remove("drag-over"));
+    area.addEventListener("drop", (e) => {
+        e.preventDefault();
+        area.classList.remove("drag-over");
+        if (e.dataTransfer.files.length) uploadFile(e.dataTransfer.files[0]);
+    });
+
+    input.addEventListener("change", () => {
+        if (input.files.length) uploadFile(input.files[0]);
+        input.value = "";
+    });
+}
+
+async function uploadFile(file) {
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (!["pdf", "txt"].includes(ext)) {
+        showToast("仅支持 PDF 和 TXT 格式", "error");
+        return;
+    }
+
+    const progress = $("#uploadProgress");
+    const fill = $("#progressFill");
+    const text = $("#progressText");
+    progress.hidden = false;
+    fill.style.width = "10%";
+    text.textContent = "正在上传: " + file.name;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+        fill.style.width = "40%";
+        text.textContent = "正在处理文档...";
+
+        const res = await fetch("/api/upload", { method: "POST", body: formData });
+        fill.style.width = "80%";
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Upload failed");
+
+        fill.style.width = "100%";
+        text.textContent = data.message;
+        showToast(data.message, "success");
+
+        loadFiles();
+        checkHealth();
+
+        setTimeout(() => {
+            progress.hidden = true;
+            fill.style.width = "0%";
+        }, 2500);
+    } catch (err) {
+        showToast("上传失败: " + err.message, "error");
+        progress.hidden = true;
+        fill.style.width = "0%";
+    }
+}
+
+// ── Search ─────────────────────────────────────────────
+function setupSearch() {
+    const input = $("#searchInput");
+    const btn = $("#searchBtn");
+
+    btn.addEventListener("click", () => doSearch(input.value.trim()));
+    input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") doSearch(input.value.trim());
+    });
+}
+
+async function doSearch(query) {
+    if (!query) {
+        showToast("请输入搜索内容", "error");
+        return;
+    }
+
+    const btn = $("#searchBtn");
+    const section = $("#resultsSection");
+    const list = $("#resultsList");
+    const countEl = $("#resultCount");
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>检索中';
+    list.innerHTML = "";
+    section.hidden = false;
+
+    try {
+        const res = await fetch("/api/search?q=" + encodeURIComponent(query) + "&n=10");
+        const data = await res.json();
+
+        if (!res.ok) throw new Error(data.error || "Search failed");
+
+        countEl.textContent = "找到 " + data.count + " 条相关结果";
+
+        if (data.count === 0) {
+            list.innerHTML = '<div class="empty">未找到匹配结果，请尝试其他关键词</div>';
+            return;
+        }
+
+        data.results.forEach((r, i) => list.appendChild(renderResult(r, i)));
+    } catch (err) {
+        showToast("检索失败: " + err.message, "error");
+        countEl.textContent = "";
+        list.innerHTML = '<div class="empty">检索出错，请检查服务状态</div>';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "检索";
+    }
+}
+
+function renderResult(result, index) {
+    const el = document.createElement("div");
+    el.className = "result-item";
+    el.style.animationDelay = index * 0.06 + "s";
+
+    const meta = result.metadata || {};
+    const filename = meta.filename || "未知文件";
+    const chunkIdx = (meta.chunk_index ?? 0) + 1;
+    const total = meta.total_chunks || "?";
+    const score = result.distance != null ? result.distance.toFixed(4) : "N/A";
+
+    el.innerHTML =
+        '<div class="result-header">' +
+            '<div class="result-file"><span class="file-badge">' + esc(filename) + '</span></div>' +
+            '<span class="result-score">Score: ' + score + '</span>' +
+        '</div>' +
+        '<div class="result-text">' + esc(result.text) + '</div>' +
+        '<div class="result-meta">片段 ' + chunkIdx + ' / ' + total + '</div>';
+
+    return el;
+}
+
+// ── Files List ─────────────────────────────────────────
+async function loadFiles() {
+    try {
+        const res = await fetch("/api/files");
+        const data = await res.json();
+        const el = $("#filesList");
+
+        if (!data.files || data.files.length === 0) {
+            el.innerHTML = '<p class="empty">暂无文档，请先上传</p>';
+            return;
+        }
+
+        el.innerHTML = "";
+        data.files.forEach((f) => el.appendChild(renderFileItem(f)));
+    } catch {
+        // silently ignore
+    }
+}
+
+function renderFileItem(file) {
+    const el = document.createElement("div");
+    el.className = "file-item";
+
+    const dt = new Date(file.uploaded_at);
+    const timeStr = dt.toLocaleDateString("zh-CN") + " " + dt.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+    el.innerHTML =
+        '<div class="file-info">' +
+            '<span>' + esc(file.filename) + '</span>' +
+            '<span class="file-chunks">' + file.chunks + ' 片段</span>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:0.6rem">' +
+            '<span class="file-time">' + timeStr + '</span>' +
+            '<button class="btn-del" title="删除">&times;</button>' +
+        '</div>';
+
+    el.querySelector(".btn-del").addEventListener("click", () => deleteFile(file.filename));
+    return el;
+}
+
+async function deleteFile(filename) {
+    if (!confirm('确定删除 "' + filename + '" 及其所有片段？')) return;
+    try {
+        const res = await fetch("/api/files/" + encodeURIComponent(filename), { method: "DELETE" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        showToast("已删除: " + filename, "success");
+        loadFiles();
+        checkHealth();
+    } catch (err) {
+        showToast("删除失败: " + err.message, "error");
+    }
+}
+
+// ── Utilities ──────────────────────────────────────────
+function showToast(msg, type) {
+    const t = $("#toast");
+    t.textContent = msg;
+    t.className = "toast" + (type ? " " + type : "");
+    t.hidden = false;
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.hidden = true; }, 3000);
+}
+
+function esc(str) {
+    const d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
+}
