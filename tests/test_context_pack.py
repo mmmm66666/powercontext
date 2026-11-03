@@ -14,12 +14,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
 
 import pytest
 
+from powercontext.builtin.persistence.sqlite import SQLiteConfig
+from powercontext.builtin.runtime import BuiltinConfig, PrepareContextRequest, open_builtin_runtime
 from powercontext.builtin.runtime.context_pack import (
     CONTEXT_PACK_DELTA_SCHEMA,
     CONTEXT_PACK_SCHEMA,
@@ -28,6 +31,7 @@ from powercontext.builtin.runtime.context_pack import (
     ContextPackError,
     apply_context_pack_delta,
 )
+from powercontext.builtin.scope import ScopeDraft
 
 
 def _pack_payload(items: tuple[bytes, ...]) -> dict:
@@ -227,3 +231,24 @@ def test_repeated_rounds_reuse_the_previous_prefix_and_save_transport() -> None:
     changed = ContextPack.from_content(content + "\n\nSpeaker 1: one more appended turn.")
     moving = ContextPackDelta.between(first, changed)
     assert moving.prefix_items >= len(first.items) - 1
+
+
+def test_prepare_incremental_supports_a_legal_empty_context(tmp_path) -> None:
+    async def scenario() -> None:
+        config = BuiltinConfig(database=SQLiteConfig(url=f"sqlite+aiosqlite:///{tmp_path / 'empty.db'}"))
+        async with open_builtin_runtime(config) as runtime:
+            scope = await runtime.scopes.create(
+                ScopeDraft(title="Empty", summary="Empty", idempotency_key="context-pack-empty")
+            )
+            context = runtime.context.for_scope(scope.scope_id)
+            request = PrepareContextRequest(query="empty", max_bytes=512)
+            first = await context.prepare_incremental(request)
+            assert isinstance(first, ContextPack)
+            assert first.items == ()
+
+            second = await context.prepare_incremental(request, base_pack=first)
+            assert isinstance(second, ContextPackDelta)
+            assert second.prefix_items == 0 and second.appended == ()
+            assert apply_context_pack_delta(first, second) == first
+
+    asyncio.run(scenario())
