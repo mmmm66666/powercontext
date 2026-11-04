@@ -108,6 +108,7 @@ def test_content_boundary_that_cannot_fit_one_character_fails() -> None:
 def test_empty_packs_and_deltas_round_trip() -> None:
     empty = ContextPack.from_content("")
     assert empty.items == ()
+    assert ContextPack.from_content(None) == empty
     assert ContextPack.from_bytes(empty.to_bytes()) == empty
 
     same = ContextPackDelta.between(empty, ContextPack.from_content(""))
@@ -202,6 +203,14 @@ def test_apply_rejects_wrong_base_bounds_and_target_digest() -> None:
         apply_context_pack_delta(
             base, ContextPackDelta(base.digest, "sha256:" + "0" * 64, delta.prefix_items, delta.appended)
         )
+
+
+def test_apply_accepts_serialized_packs_and_deltas() -> None:
+    base = ContextPack.build((b"one", b"two"))
+    target = ContextPack.build((b"one", b"three"))
+    delta = ContextPackDelta.between(base, target)
+    rebuilt = apply_context_pack_delta(base.to_bytes(), delta.to_bytes())
+    assert rebuilt.to_bytes() == target.to_bytes()
 
 
 def test_build_and_between_validate_types() -> None:

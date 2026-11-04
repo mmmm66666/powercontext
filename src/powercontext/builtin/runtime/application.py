@@ -856,11 +856,11 @@ class ScopedContextApplication:
         """Return a complete pack, or a delta against a previously received pack."""
 
         prepared = await self.prepare(request)
-        # Small chunks keep more of a stable prefix when citations or metadata
-        # change early in the rendered context; content remains exact.
-        target = ContextPack.from_content(prepared.content or "", chunk_bytes=128)
+        target = ContextPack.from_content(prepared.content)
         if base_pack is None:
             return target
+        if isinstance(base_pack, bytes | bytearray):
+            base_pack = ContextPack.from_bytes(base_pack)
         if not isinstance(base_pack, ContextPack):
             raise ContextPackError("base_pack must be a ContextPack")  # noqa: TRY003
         return ContextPackDelta.between(base_pack, target)

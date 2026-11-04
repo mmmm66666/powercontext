@@ -33,6 +33,10 @@ CONTEXT_PACK_SCHEMA = "powercontext.context-pack.v1"
 CONTEXT_PACK_DELTA_SCHEMA = "powercontext.context-pack-delta.v1"
 DEFAULT_CHUNK_BYTES = 512
 
+# Chunks stay well inside the caller's ceiling so a change to an early citation
+# or metadata byte keeps a longer reusable prefix across consecutive rounds.
+_PREFERRED_CHUNK_BYTES = 128
+
 _DIGEST_PATTERN = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _PACK_FIELDS = frozenset({"schema", "items", "digest", "byte_count"})
 _DELTA_FIELDS = frozenset({"schema", "base_digest", "target_digest", "prefix_items", "appended"})
@@ -130,12 +134,14 @@ class ContextPack:
         return cls(items=normalized, digest=_pack_digest(normalized))
 
     @classmethod
-    def from_content(cls, content: str | bytes, *, chunk_bytes: int = DEFAULT_CHUNK_BYTES) -> ContextPack:
+    def from_content(cls, content: str | bytes | None, *, chunk_bytes: int = DEFAULT_CHUNK_BYTES) -> ContextPack:
         """Chunk UTF-8 content deterministically into valid, bounded chunks."""
 
         if type(chunk_bytes) is not int or chunk_bytes < 1:
             raise ContextPackError("chunk_bytes must be a positive integer")  # noqa: TRY003
-        if isinstance(content, str):
+        if content is None:
+            text = ""
+        elif isinstance(content, str):
             text = content
         elif isinstance(content, bytes | bytearray):
             try:
@@ -145,7 +151,7 @@ class ContextPack:
         else:
             raise ContextPackError("content must be text or bytes")  # noqa: TRY003
         try:
-            return cls.build(_chunk_text(text, chunk_bytes))
+            return cls.build(_chunk_text(text, min(chunk_bytes, _PREFERRED_CHUNK_BYTES)))
         except UnicodeEncodeError:
             raise ContextPackError("content must be encodable as UTF-8") from None  # noqa: TRY003
 
@@ -258,6 +264,10 @@ class ContextPackDelta:
 def apply_context_pack_delta(base: ContextPack, delta: ContextPackDelta) -> ContextPack:
     """Validate one delta against its base and rebuild the target pack."""
 
+    if isinstance(base, bytes | bytearray):
+        base = ContextPack.from_bytes(base)
+    if isinstance(delta, bytes | bytearray):
+        delta = ContextPackDelta.from_bytes(delta)
     if not isinstance(base, ContextPack) or not isinstance(delta, ContextPackDelta):
         raise ContextPackError("delta application requires a Pack and a Delta")  # noqa: TRY003
     if delta.base_digest != base.digest:
