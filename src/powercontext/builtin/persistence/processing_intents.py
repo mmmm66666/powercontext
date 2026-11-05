@@ -171,6 +171,34 @@ class ArtifactProcessingIntentRepository:
         )
         return cast(StoredArtifactProcessingIntent, await self.load(connection, scope_id, binding_name))
 
+    async def admit_pending(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        binding_name: str,
+        /,
+    ) -> StoredArtifactProcessingIntent:
+        """Accept one scope whose pending Source count already qualifies.
+
+        The caller proves the domain count and exclusion from active work in its
+        own fenced transaction; this method only publishes the durable intent.
+        """
+
+        current = await self.load(connection, scope_id, binding_name, for_update=True)
+        if current is None:
+            raise InvalidRepositoryArgumentError("scope_id", "count-trigger member is not registered")
+        requested = current.requested_generation
+        if current.dirty_generation > current.clean_generation and requested == current.handled_generation:
+            requested += 1
+        if requested != current.requested_generation:
+            table = ARTIFACT_PROCESSING_INTENTS_TABLE
+            await connection.execute(
+                update(table)
+                .where(table.c.scope_id == scope_id, table.c.binding_name == binding_name)
+                .values(requested_generation=requested)
+            )
+        return cast(StoredArtifactProcessingIntent, await self.load(connection, scope_id, binding_name))
+
     async def scan(
         self,
         connection: AsyncConnection,

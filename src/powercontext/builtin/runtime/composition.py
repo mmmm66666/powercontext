@@ -21,6 +21,7 @@ import logging
 import os
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
+from dataclasses import replace
 from datetime import timedelta
 from functools import partial
 from pathlib import Path
@@ -719,6 +720,14 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
         "profile": config.runtime.profile_schedule_enabled or None,
         "skill": None,
     }
+    count_thresholds = {
+        "memory": config.runtime.memory_source_count_threshold,
+        "topic-memory": config.runtime.topic_memory_source_count_threshold,
+    }
+    for family, threshold in count_thresholds.items():
+        if threshold is not None and family not in declared | registered:
+            issue = "scheduled-pipeline" if family == "memory" else "topic-memory-generation"
+            raise BuiltinConfigurationError(issue)
     for family, schedule in automatic.items():
         if schedule is not None and family not in declared | registered:
             if (
@@ -790,6 +799,12 @@ def _artifact_processing_bindings(  # noqa: C901 - validate and assemble one reg
             )
         )
     _validate_processing_registrations(configured)
+    configured = [
+        replace(binding, source_count_threshold=count_thresholds[binding.artifact_family])
+        if binding.source_count_threshold is None and count_thresholds.get(binding.artifact_family) is not None
+        else binding
+        for binding in configured
+    ]
     return tuple(configured)
 
 
