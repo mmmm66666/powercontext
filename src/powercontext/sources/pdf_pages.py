@@ -609,24 +609,69 @@ async def search_pdf_pages(
     query_terms = _question_terms(question)
     if not query_terms:
         return ()
-    variants = _query_variants(query_terms)
-    if not variants:
-        return ()
-    candidates = await _collect_candidates(memory, variants)
+    candidates = await _list_candidates(memory)
+    if not candidates:
+        variants = _query_variants(query_terms)
+        if not variants:
+            return ()
+        candidates = await _collect_candidates(memory, variants)
     if not candidates:
         return ()
     company_tokens = _company_tokens(question)
-    if company_tokens:
-        documents = {candidate.document_id for candidate in candidates}
-        matched = {
-            document
-            for document in documents
-            if any(token in re.sub(r"[^a-z0-9]", "", document.casefold()) for token in company_tokens)
-        }
-        if matched and len(matched) < len(documents):
-            candidates = tuple(candidate for candidate in candidates if candidate.document_id in matched)
+    candidates = _filter_documents(candidates, company_tokens)
     ranked = _rank_candidates(candidates, query_terms, _strong_company_tokens(company_tokens))
     return tuple(_citation(candidate.hit) for candidate in ranked[:limit])
+
+
+class _RecordHit:
+    """Adapt one listed Memory entry to the page-candidate interface."""
+
+    __slots__ = ("entry_id", "entry_version_id", "memory_ref", "text")
+
+    def __init__(self, record: Any) -> None:
+        self.text = record.entry.text
+        self.entry_id = record.entry.entry_id
+        self.entry_version_id = record.entry.entry_version_id
+        self.memory_ref = record.memory_ref
+
+
+async def _list_candidates(memory: Any) -> tuple[_PageCandidate, ...]:
+    """Read the scope's current entries so every page can be considered.
+
+    Enumerating the public Memory entry list avoids depending on lexical admission for
+    candidate recall; ranking is still strictly local to stored entries.
+    """
+
+    lister = getattr(memory, "list", None)
+    if lister is None:
+        return ()
+    try:
+        page = await lister()
+    except Exception:
+        return ()
+    entries = getattr(page, "entries", ())
+    return tuple(
+        _PageCandidate(_RecordHit(record))
+        for record in entries
+        if getattr(record.entry, "text", "").strip()
+    )
+
+
+def _filter_documents(
+    candidates: tuple[_PageCandidate, ...],
+    company_tokens: frozenset[str],
+) -> tuple[_PageCandidate, ...]:
+    if not company_tokens:
+        return candidates
+    documents = {candidate.document_id for candidate in candidates}
+    matched = {
+        document
+        for document in documents
+        if any(token in re.sub(r"[^a-z0-9]", "", document.casefold()) for token in company_tokens)
+    }
+    if matched and len(matched) < len(documents):
+        return tuple(candidate for candidate in candidates if candidate.document_id in matched)
+    return candidates
 
 
 class _PageCandidate:
