@@ -38,7 +38,7 @@ PDF_PAGE_SOURCE_NAME = "pdf-page"
 PDF_PAGE_SOURCE_VERSION = "1"
 
 _TOKEN_PATTERN = re.compile(r"[a-z]+|\d+")
-_COMPANY_TOKEN_PATTERN = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9&.\-]{1,}\b")
+_COMPANY_TOKEN_PATTERN = re.compile(r"\b(?:[A-Z][A-Za-z0-9&.\-]*|[0-9]+[A-Za-z][A-Za-z0-9&.\-]*)\b")
 _COMPANY_EXCLUSIONS = frozenset(
     {
         "africa",
@@ -615,8 +615,17 @@ async def search_pdf_pages(
     candidates = await _collect_candidates(memory, variants)
     if not candidates:
         return ()
-    strong_documents = _strong_company_tokens(_company_tokens(question))
-    ranked = _rank_candidates(candidates, query_terms, strong_documents)
+    company_tokens = _company_tokens(question)
+    if company_tokens:
+        documents = {candidate.document_id for candidate in candidates}
+        matched = {
+            document
+            for document in documents
+            if any(token in re.sub(r"[^a-z0-9]", "", document.casefold()) for token in company_tokens)
+        }
+        if matched and len(matched) < len(documents):
+            candidates = tuple(candidate for candidate in candidates if candidate.document_id in matched)
+    ranked = _rank_candidates(candidates, query_terms, _strong_company_tokens(company_tokens))
     return tuple(_citation(candidate.hit) for candidate in ranked[:limit])
 
 
