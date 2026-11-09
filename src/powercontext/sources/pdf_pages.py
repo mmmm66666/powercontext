@@ -741,6 +741,7 @@ def _rank_candidates(
             )
             + _section_bonus(candidate, query_terms)
             + _document_bonus(candidate, company_tokens)
+            + _pair_bonus(candidate, query_terms)
         )
         if _is_index_page(candidate.body):
             score -= _INDEX_PENALTY
@@ -825,6 +826,26 @@ def _document_bonus(candidate: _PageCandidate, company_tokens: frozenset[str]) -
     compact = re.sub(r"[^a-z0-9]", "", candidate.document_id.casefold())
     matches = sum(1 for token in company_tokens if token in compact)
     return 40.0 * matches
+
+
+def _pair_bonus(candidate: _PageCandidate, query_terms: tuple[str, ...]) -> float:
+    """Reward pages that satisfy adjacent two-term probes of the question.
+
+    Whole-question retrieval tends to lose pages that repeat only a small part of a
+    long question. Pair probes are the smallest lexical unit that still expresses a
+    relation between two question concepts.
+    """
+
+    keys = [_term_key(term) for term in query_terms]
+    if len(keys) < 2:
+        return 0.0
+    present = set(candidate.term_counts) | set(candidate.document_counts)
+    matched = sum(
+        1
+        for left, right in zip(keys, keys[1:], strict=False)
+        if left in present and right in present
+    )
+    return 3.0 * matched / (len(keys) - 1)
 
 
 def _citation(hit: Any) -> MemoryCitation:
