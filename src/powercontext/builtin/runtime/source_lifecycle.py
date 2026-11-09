@@ -186,6 +186,8 @@ class ScopedSourceLifecycle:
         parents: tuple[str, ...],
         policy: Literal["all", "any"],
     ) -> None:
+        if not isinstance(artifact_ref, ArtifactRef):
+            raise SourceLifecycleError("topic registration requires an ArtifactRef")
         if artifact_ref.family != "topic-memory":
             raise SourceLifecycleError("topic registration requires a topic-memory ArtifactRef")
         await self._validate_topic(artifact_ref)
