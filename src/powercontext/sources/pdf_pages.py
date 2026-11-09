@@ -618,7 +618,7 @@ async def search_pdf_pages(
     if not candidates:
         return ()
     company_tokens = _company_tokens(question)
-    candidates = _filter_documents(candidates, company_tokens)
+    candidates = _filter_documents(candidates, company_tokens, _company_acronyms(question))
     ranked = _rank_candidates(candidates, query_terms, _strong_company_tokens(company_tokens))
     return tuple(_citation(candidate.hit) for candidate in ranked[:limit])
 
@@ -660,15 +660,22 @@ async def _list_candidates(memory: Any) -> tuple[_PageCandidate, ...]:
 def _filter_documents(
     candidates: tuple[_PageCandidate, ...],
     company_tokens: frozenset[str],
+    company_acronyms: frozenset[str] = frozenset(),
 ) -> tuple[_PageCandidate, ...]:
-    if not company_tokens:
+    if not company_tokens and not company_acronyms:
         return candidates
     documents = {candidate.document_id for candidate in candidates}
-    matched = {
-        document
-        for document in documents
-        if any(token in re.sub(r"[^a-z0-9]", "", document.casefold()) for token in company_tokens)
-    }
+
+    def matching(tokens: frozenset[str]) -> set[str]:
+        return {
+            document
+            for document in documents
+            if any(token in re.sub(r"[^a-z0-9]", "", document.casefold()) for token in tokens)
+        }
+
+    matched = matching(company_tokens)
+    if not matched:
+        matched = matching(company_acronyms)
     if matched and len(matched) < len(documents):
         return tuple(candidate for candidate in candidates if candidate.document_id in matched)
     return candidates
@@ -893,6 +900,28 @@ def _strong_company_tokens(tokens: frozenset[str]) -> frozenset[str]:
     strengths = {token: len(token) + (5 if token[:1].isdigit() else 0) for token in tokens}
     best = max(strengths.values())
     return frozenset(token for token, strength in strengths.items() if strength == best)
+
+
+def _company_acronyms(question: str) -> frozenset[str]:
+    """Derive company acronyms such as AMD from multi-word proper names."""
+
+    words = [
+        match
+        for match in _COMPANY_TOKEN_PATTERN.finditer(question)
+        if match.group().casefold() not in _STOP_WORDS
+        and match.group().casefold() not in _COMPANY_EXCLUSIONS
+    ]
+    acronyms: set[str] = set()
+    for start in range(len(words)):
+        for end in range(start + 2, min(len(words), start + 4) + 1):
+            span = words[start:end]
+            gap = question[span[0].end() : span[-1].start()]
+            if re.sub(r"[\s&.,'\-]", "", gap):
+                break
+            acronym = "".join(re.sub(r"[^A-Za-z0-9]", "", match.group())[:1] for match in span).casefold()
+            if len(acronym) >= 3 and acronym.isalnum():
+                acronyms.add(acronym)
+    return frozenset(acronyms)
 
 
 def _query_variants(query_terms: tuple[str, ...]) -> dict[str, float]:
