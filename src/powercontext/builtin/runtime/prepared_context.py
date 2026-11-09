@@ -365,6 +365,7 @@ class PreparedContextBuilder:
             selected = trial
         if not selected:
             return ()
+        selected = _expand_selected(selected, entry_map, request.max_bytes)
         return _fragments_from(selected, entry_map)
 
     def probe_budget(
@@ -1020,6 +1021,54 @@ def _merge_spans(
         else:
             merged.append((start, end))
     return merged
+
+
+def _expand_selected(
+    selected: dict[tuple[str, str, int, str, str], list[tuple[int, int]]],
+    entries: dict[tuple[str, str, int, str, str], _EvidenceEntry],
+    max_bytes: int,
+) -> dict[tuple[str, str, int, str, str], list[tuple[int, int]]]:
+    """Spend otherwise unusable bytes by extending the already selected evidence."""
+
+    expanded = {key: list(spans) for key, spans in selected.items()}
+
+    def try_spans(key: tuple[str, str, int, str, str], spans: list[tuple[int, int]]) -> bool:
+        trial = dict(expanded)
+        trial[key] = spans
+        fragments = _fragments_from(trial, entries)
+        return len(_render_evidence_fragments(fragments).encode("utf-8")) <= max_bytes
+
+    for key in list(expanded):
+        entry = entries[key]
+        for _pass in range(2):
+            for index in range(len(expanded[key])):
+                if index >= len(expanded[key]):
+                    break
+                start, end = expanded[key][index]
+                low, high, best = end + 1, len(entry.text), end
+                while low <= high:
+                    middle = (low + high) // 2
+                    spans = _merge_spans(expanded[key], (start, middle), entry.text)
+                    if try_spans(key, spans):
+                        best = middle
+                        low = middle + 1
+                    else:
+                        high = middle - 1
+                if best > end:
+                    expanded[key] = _merge_spans(expanded[key], (start, best), entry.text)
+                start, end = expanded[key][index]
+                low, high, best = 0, start - 1, start
+                while low <= high:
+                    middle = (low + high) // 2
+                    spans = _merge_spans(expanded[key], (middle, end), entry.text)
+                    if try_spans(key, spans):
+                        best = middle
+                        high = middle - 1
+                    else:
+                        low = middle + 1
+                if best < start:
+                    expanded[key] = _merge_spans(expanded[key], (best, end), entry.text)
+    return expanded
 
 
 def _fragments_from(
